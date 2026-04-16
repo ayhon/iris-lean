@@ -43,7 +43,7 @@ theorem OFE.transpAp_op_mp (h_fun : F₁ = F₂) (h_inst : HEq RF₁ RF₂) {x y
 theorem OFE.transpAp_pcore_mp (h_fun : F₁ = F₂) (h_inst : HEq RF₁ RF₂) {x : F₁ T T} :
     (CMRA.pcore x).map (transpAp h_fun).mp ≡ CMRA.pcore ((transpAp h_fun).mp x) := by
   cases h_fun; cases eq_of_heq h_inst
-  simp [Equiv, Option.Forall₂]
+  simp only [Equiv, Option.Forall₂, eq_mp_eq_cast, cast_eq]
   cases CMRA.pcore x <;> simp [Equiv.rfl]
 
 theorem OFE.transpAp_validN_mp (h_fun : F₁ = F₂) (h_inst : HEq RF₁ RF₂) {x : F₁ T T} (H : ✓{n} x) :
@@ -60,7 +60,7 @@ section ElemG
 
 class ElemG (FF : BundledGFunctors) (F : OFunctorPre) [RFunctorContractive F] where
   τ : GType
-  transp : FF τ = ⟨F, ‹_›⟩
+  transp : FF τ = ⟨F, inferInstance⟩
 
 open OFE
 
