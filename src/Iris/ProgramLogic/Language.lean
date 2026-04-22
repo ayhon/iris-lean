@@ -54,162 +54,64 @@ instance [ι : ToVal Expr Val]: Function.Injective (ι.ofVal) := by
 
 end ToVal
 
-class PrimStep
+abbrev RedStep
     (Expr : Type e)
-    (State : outParam (Type σ))
-    (Obs : outParam (Type o)) where
-  /-- The primitive reduction relation of the language -/
-  primStep   : Expr × State → Obs → Expr × State × List Expr → Prop
+    (State : Type σ)
+    (Obs : Type o) := Expr × State → List Obs → Expr × State × List Expr → Prop
 
-namespace PrimStep
-
-@[inherit_doc PrimStep.primStep]
-scoped notation conf:40 " -<" obs:max ">-> " conf':41  => PrimStep.primStep conf obs conf'
-
-end PrimStep
-open PrimStep
-
-section PureConfigurationTypes
-variable [PrimStep Expr State Obs]
+namespace RedStep
+variable (step : RedStep Expr State Obs)
 
 @[rocq_alias reducible]
 def reducible : Expr × State → Prop
 | (e, σ) => ∃ obs e' σ' eₜ,
-    (e, σ) -<obs>-> (e', σ', eₜ)
+    step (e, σ) obs (e', σ', eₜ)
 
 @[rocq_alias reducible_no_obs]
-def pureReducible [PrimStep Expr State (List Obs)] : Expr × State → Prop
+def pureReducible : Expr × State → Prop
 | (e, σ) => ∃ e' σ' eₜ,
-    (e, σ) -<[]>-> (e', σ', eₜ)
+    step (e, σ) [] (e', σ', eₜ)
 
 def irreducible : Expr × State → Prop
-| (e, σ) => ∀ obs e' σ' eₜ, ¬ (e, σ) -<obs>-> (e', σ', eₜ)
+| (e, σ) => ∀ obs e' σ' eₜ, ¬ step (e, σ) obs (e', σ', eₜ)
 
 def stuck [ToVal Expr Val]: Expr × State → Prop
-| (e, σ) => toVal e = none ∧ irreducible (e, σ)
+| (e, σ) => toVal e = none ∧ step.irreducible (e, σ)
 
 def notStuck [ToVal Expr Val]: Expr × State → Prop
-| (e, σ) => (toVal e).isSome ∨ reducible (e, σ)
+| (e, σ) => (toVal e).isSome ∨ step.reducible (e, σ)
 
-end PureConfigurationTypes
+@[rocq_alias atomicity]
+inductive Atomicity where
+| WeaklyAtomic
+| StronglyAtomic
 
-class Language
-    (Expr  : Type e)
-    (State : outParam (Type σ))
-    (Obs   : outParam (Type o))
-    (Val   : outParam (Type v))
-  extends
-    PrimStep Expr State (List Obs),
-    ToVal Expr Val where
-  /-- Values in a language should not reduce -/
-  val_stuck : ∀ {e} {σ : State} {obs e' σ' eₜ},
-    (e, σ) -<obs>-> (e', σ', eₜ) → toVal e = none
+@[rocq_alias Atomic]
+class Atomic [ToVal Expr Val] (a : Atomicity) (e : Expr) : Prop where
+  atomic : ∀ (σ : State) obs e' σ' eₜ,
+    step (e, σ) obs (e', σ', eₜ) →
+    match a with
+    | .WeaklyAtomic => ¬ step.reducible (e', σ')
+    | .StronglyAtomic => (toVal e').isSome
 
-attribute [rocq_alias mixin_val_stuck] Language.val_stuck
-
-namespace Language
-
-variable [Λ : Language Expr State Obs Val]
-
-variable {e e': Expr}{σ σ': State}{v v' : Val}
-
-/-- A single atomic step in a threaded context -/
-@[grind, rocq_alias step]
-inductive Step : List Expr × State → List Obs → List Expr × State → Prop
-  where
-  | atomic : ∀ e σ  obs e' σ' eₜ,
-    (e, σ) -<obs>-> (e', σ', eₜ) →
-    ∀ (t₁ t₂: List Expr),
-    Step (t₁ ++ e :: t₂, σ) obs (t₁ ++ e' :: t₂ ++ eₜ, σ')
-    -- NOTE: Using `t₁ ++ e :: t₂` instead of `t₁ ++ [e] ++ t₂` because
-    -- most lemmas about an element appearing in the middle of a list
-    -- are in the shape `t₁ ++ e :: t₂`, this form is preferred.
-
-def Step.of_primStep : ∀ {e σ}{obs : List Obs}{e'} {σ' : State} {eₜ},
-    (e, σ) -<obs>-> (e', σ', eₜ) →
-    ∀ {t₁ t₂: List Expr},
-    Step (t₁ ++ e :: t₂, σ) obs (t₁ ++ e' :: t₂ ++ eₜ, σ') :=
-  (Language.Step.atomic _ _ _ _ _ _ · _ _)
-
-@[inherit_doc Step]
-scoped notation conf:40 " -<" obs:max ">->ₜₚ " conf':41 => Language.Step conf obs conf'
-
-/-- The (possibly zero) sequence of `Language.step`s -/
-@[grind, rocq_alias nsteps]
-inductive NSteps : Nat → List Expr × State → List Obs → List Expr × State → Prop
-  where
-  | refl (ρ : List Expr × State): NSteps 0 ρ [] ρ
-  | cons n (ρ₁ ρ₂ ρ₃ : List Expr × State) (obs obs' : List Obs) :
-      ρ₁ -<obs>->ₜₚ ρ₂ →
-      NSteps n ρ₂ obs' ρ₃ →
-      NSteps (n+1) ρ₁ (obs ++ obs') ρ₃
-
-@[inherit_doc NSteps]
-scoped notation conf:40 " -<" obs:max ">->ₜₚ^[" n:max "] " conf':41 =>
- Language.NSteps n conf obs conf'
-
-/-- A `Language.step`s with no observation information -/
-@[rocq_alias erased_step]
-def erasedStep (ρ  ρ₂: List Expr × State) := ∃ obs, Step ρ obs ρ₂
-
-@[inherit_doc erasedStep]
-scoped notation conf:40 " -·->ₜₚ " conf':41 => Language.erasedStep conf conf'
-
-/-- A sequence of `Language.erasedStep`s -/
-scoped notation conf:40 " -·->ₜₚ* " conf':41 =>
-  Relation.ReflTransGen erasedStep conf conf'
-
-open Relation in
-@[rocq_alias erased_step_nsteps]
-theorem erasedStep_NSteps (ρ₁ ρ₂ : List Expr × State) :
-    ρ₁ -·->ₜₚ* ρ₂ ↔ ∃ n obs, ρ₁ -<obs>->ₜₚ^[n] ρ₂ := by
-  constructor <;> intros hyp
-  · replace ⟨n, hyp⟩ := ReflTrans_iff_exists_iterate.1 hyp
-    exists n
-    induction hyp using Relation.Iterate.head_induction_on with
-    | rfl => exists []; constructor
-    | head ρ' firstStep lastSteps IH =>
-      replace ⟨obs, firstStep⟩ := firstStep
-      replace ⟨obs', IH⟩ := IH
-      exists (obs ++ obs')
-      constructor <;> assumption
-  · replace ⟨n, obs, hyp⟩ := hyp
-    apply ReflTrans_iff_exists_iterate.2
-    exists n
-    induction hyp with
-    | refl => constructor
-    | cons n ρ₁ ρ₂ ρ₃ obs obs' =>
-      apply Iterate.head
-      · exists obs
-      · assumption
+end RedStep
 
 section ReducibilityLemmas
 
+variable {step  : RedStep Expr State Obs}
+variable [ToVal Expr Val]
+
+local notation conf:40 " -<" obs:max ">-> " conf':41  => step conf obs conf'
+
 @[rocq_alias not_reducible, grind =]
 theorem not_reducible_iff_irreducible {e : Expr} {σ : State} :
-    (¬ reducible (e, σ)) ↔ irreducible (e, σ) := by
-  grind only [reducible, irreducible]
-
-@[rocq_alias reducible_not_val, grind .]
-theorem toVal_none_of_reducible :
-    reducible (e, σ) → toVal e = none := by
-  grind only [reducible, val_stuck]
-
-@[rocq_alias reducible_no_obs_reducible, grind .]
-theorem reducible_of_pureReducible :
-    pureReducible (e, σ) → reducible (e, σ) := by
-  grind only [pureReducible, reducible]
-
-@[rocq_alias val_irreducible]
-theorem val_irreducible :
-    (toVal e).isSome →
-    irreducible (e, σ) := by
-  grind only [irreducible, val_stuck, = Option.isSome_none]
+    (¬ step.reducible (e, σ)) ↔ step.irreducible (e, σ) := by
+  grind only [RedStep.reducible, RedStep.irreducible]
 
 @[rocq_alias not_not_stuck, grind =]
 theorem not_not_suck {e : Expr} {σ : State} :
-    (¬ notStuck (e, σ)) ↔ stuck (e, σ) := by
-  dsimp [stuck, notStuck]
+    (¬ step.notStuck (e, σ)) ↔ step.stuck (e, σ) := by
+  dsimp [RedStep.stuck, RedStep.notStuck]
   match h : (toVal e) with
   | some v =>
     simp only [Option.isSome_some, true_or, not_true_eq_false, reduceCtorEq, false_and]
@@ -217,52 +119,100 @@ theorem not_not_suck {e : Expr} {σ : State} :
     simp only [Option.isSome_none, Bool.false_eq_true, false_or, not_reducible_iff_irreducible,
       true_and]
 
-@[rocq_alias prim_step_not_stuck]
-theorem primStep_notStuck {e : Expr} {σ obs e' σ' eₜ} :
-    (e, σ) -<obs>-> (e', σ', eₜ) →
-    notStuck (e, σ) :=
-  fun h => .inr ⟨_, _, _, _, h⟩
-end ReducibilityLemmas
+@[rocq_alias reducible_no_obs_reducible, grind .]
+theorem reducible_of_pureReducible :
+    step.pureReducible (e, σ) → step.reducible (e, σ) := by
+  grind only [RedStep.pureReducible, RedStep.reducible]
 
-@[rocq_alias atomicity]
-inductive Atomicity where
-| WeaklyAtomic
-| StronglyAtomic
+@[rocq_alias prim_step_not_stuck]
+theorem notStuck_of_step {e : Expr} {σ obs e' σ' eₜ}  :
+    (e, σ) -<obs>-> (e', σ', eₜ) →
+    step.notStuck (e, σ) :=
+  fun h => .inr ⟨obs, e', σ', eₜ, h⟩
 
 #rocq_ignore stuckness_to_atomicity "There is no `Stuckness` implementation yet."
 
-@[rocq_alias Atomic]
-class Atomic (a : Atomicity) (e : Expr) : Prop where
-  atomic : ∀ (σ : State) obs e' σ' eₜ,
-    (e, σ) -<obs>-> (e', σ', eₜ) →
-    match a with
-    | .WeaklyAtomic => ¬ reducible (e', σ')
-    | .StronglyAtomic => (toVal e').isSome
+end ReducibilityLemmas
+
+/-- Just a way to tag step functions with names  -/
+class NamedStep
+  {Expr : Type _}
+  {State : outParam <| Type _}
+  {Obs : outParam <| Type _}
+(name : semiOutParam <| Lean.Name) (primStep : outParam <| RedStep Expr State Obs)
+
+abbrev NamedStep.step {step : RedStep Expr State Obs} [NamedStep name step] : RedStep Expr State Obs := step
+
+namespace PrimStep
+
+/-- The primitive step of the language -/
+scoped notation conf:40 " -<" obs:max ">-> " conf':41  => NamedStep.step (name := `primitive) conf obs conf'
+
+end PrimStep
+
+open PrimStep
+
+class IsLanguage
+    (Expr  : Type e)
+    (State : outParam (Type σ))
+    (Obs   : outParam (Type o))
+    (Val   : outParam (Type v))
+    (stepName : semiOutParam <| Lean.Name)
+    (primStep  : outParam <| RedStep Expr State Obs)
+  extends
+    NamedStep stepName primStep,
+    ToVal Expr Val where
+  /-- Values in a language should not reduce -/
+  val_stuck : ∀ {e} {σ : State} {obs e' σ' eₜ},
+    primStep (e, σ) obs (e', σ', eₜ) → toVal e = none
+
+attribute [rocq_alias mixin_val_stuck] IsLanguage.val_stuck
+
+namespace IsLanguage
+
+variable {primStep  : RedStep Expr State Obs} {name : Lean.Name}
+variable [Λ : IsLanguage Expr State Obs Val name primStep]
+-- #synth (StepNotation `primitive primStep)
+-- #check (StepNotation.step (Expr := Expr) (name := `primitive))
+
+variable {e e': Expr}{σ σ': State}{v v' : Val}
+
+@[rocq_alias reducible_not_val, grind .]
+theorem toVal_none_of_reducible :
+    primStep.reducible (e, σ) → toVal e = none := by
+  grind only [RedStep.reducible, Λ.val_stuck]
+
+@[rocq_alias val_irreducible]
+theorem val_irreducible :
+    (toVal e).isSome →
+    primStep.irreducible (e, σ) := by
+  grind only [RedStep.irreducible, Λ.val_stuck, = Option.isSome_none]
 
 @[rocq_alias strongly_atomic_atomic]
 theorem stronglyAtomic_atomic a :
-    Atomic (State := State) .StronglyAtomic e →
-    Atomic (State := State) a e := by
+    primStep.Atomic (State := State) .StronglyAtomic e →
+    primStep.Atomic (State := State) a e := by
   match a with
   | .StronglyAtomic => intros; assumption
   | .WeaklyAtomic =>
     rintro ⟨h⟩
     constructor
-    grind only [not_reducible_iff_irreducible, val_irreducible]
+    intros σ obs e' σ' eₜ _
+    grind only [val_irreducible (name := name) (e := e'), not_reducible_iff_irreducible (step := primStep)]
 
 
 /-- `Context K` says `K` models an evaluation context for the language -/
 @[rocq_alias LanguageCtx]
-class Context(K: Expr → Expr) where
+class Context(K: Expr → Expr)[ToVal Expr Val] where
   toVal_eq_none_fill : ∀ {e : Expr},
     toVal e = none → toVal (K e) = none
   primStep_fill : ∀ {e} {σ : State} {obs e' σ' eₜ},
-    (e, σ) -<obs>-> (e', σ', eₜ) →
-    (K e, σ) -<obs>-> (K e', σ', eₜ)
+    primStep (e, σ) obs (e', σ', eₜ) →
+    primStep (K e, σ) obs (K e', σ', eₜ)
   primStep_fill_inv : ∀ {e} {σ : State} {obs K_e' σ' eₜ},
     toVal e = .none →
-    (K e, σ) -<obs>-> (K_e', σ', eₜ) →
-    ∃ e', K_e' = K e' ∧ (e, σ) -<obs>-> (e', σ', eₜ)
+    primStep (K e, σ) obs (K_e', σ', eₜ) →
+    ∃ e', K_e' = K e' ∧ primStep (e, σ) obs (e', σ', eₜ)
 
 attribute [rocq_alias fill_not_val] Context.toVal_eq_none_fill
 attribute [rocq_alias fill_step] Context.primStep_fill
@@ -277,7 +227,7 @@ instance : Context (Λ := Λ) (id (α := Expr)) where
 
 @[rocq_alias reducible_fill]
 theorem reducible_fill (K : Expr → Expr) [Λ.Context K] ⦃e : Expr⦄ ⦃σ : State⦄ :
-    reducible (e,σ) → reducible ((K e), σ) :=
+    primStep.reducible (e,σ) → primStep.reducible ((K e), σ) :=
   fun ⟨obs, e', σ', eₜ, h⟩ =>
     ⟨obs, K e', σ', eₜ, primStep_fill h⟩
 
@@ -355,6 +305,88 @@ theorem stuck_fill (K : Expr → Expr) [Λ.Context K] :
 
 end Context
 
+class Language
+    (Expr  : Type e)
+    (State : Type σ)
+    (Obs   : Type o)
+    (Val   : Type v)
+    where
+  primStep : RedStep Expr State Obs
+  isLanguage : IsLanguage Expr State Obs Val `primitive primStep
+
+namespace Language
+
+/-- A single atomic step in a threaded context -/
+@[grind, rocq_alias step]
+inductive Step : List Expr × State → List Obs → List Expr × State → Prop
+  where
+  | atomic : ∀ e σ  obs e' σ' eₜ,
+    (e, σ) -<obs>-> (e', σ', eₜ) →
+    ∀ (t₁ t₂: List Expr),
+    Step (t₁ ++ e :: t₂, σ) obs (t₁ ++ e' :: t₂ ++ eₜ, σ')
+    -- NOTE: Using `t₁ ++ e :: t₂` instead of `t₁ ++ [e] ++ t₂` because
+    -- most lemmas about an element appearing in the middle of a list
+    -- are in the shape `t₁ ++ e :: t₂`, this form is preferred.
+
+def Step.of_primStep : ∀ {e σ}{obs : List Obs}{e'} {σ' : State} {eₜ},
+    (e, σ) -<obs>-> (e', σ', eₜ) →
+    ∀ {t₁ t₂: List Expr},
+    Step (t₁ ++ e :: t₂, σ) obs (t₁ ++ e' :: t₂ ++ eₜ, σ') :=
+  (IsLanguage.Step.atomic _ _ _ _ _ _ · _ _)
+
+
+@[inherit_doc Step]
+scoped notation conf:40 " -<" obs:max ">->ₜₚ " conf':41 => IsLanguage.Step conf obs conf'
+
+/-- The (possibly zero) sequence of `Language.step`s -/
+@[grind, rocq_alias nsteps]
+inductive NSteps : Nat → List Expr × State → List Obs → List Expr × State → Prop
+  where
+  | refl (ρ : List Expr × State): NSteps 0 ρ [] ρ
+  | cons n (ρ₁ ρ₂ ρ₃ : List Expr × State) (obs obs' : List Obs) :
+      ρ₁ -<obs>->ₜₚ ρ₂ →
+      NSteps n ρ₂ obs' ρ₃ →
+      NSteps (n+1) ρ₁ (obs ++ obs') ρ₃
+
+@[inherit_doc NSteps]
+scoped notation conf:40 " -<" obs:max ">->ₜₚ^[" n:max "] " conf':41 =>
+ IsLanguage.NSteps n conf obs conf'
+
+/-- A `Language.step`s with no observation information -/
+@[rocq_alias erased_step]
+def erasedStep (ρ  ρ₂: List Expr × State) := ∃ obs, Step ρ obs ρ₂
+
+@[inherit_doc erasedStep]
+scoped notation conf:40 " -·->ₜₚ " conf':41 => IsLanguage.erasedStep conf conf'
+
+/-- A sequence of `Language.erasedStep`s -/
+scoped notation conf:40 " -·->ₜₚ* " conf':41 =>
+  Relation.ReflTransGen erasedStep conf conf'
+
+open Relation in
+@[rocq_alias erased_step_nsteps]
+theorem erasedStep_NSteps (ρ₁ ρ₂ : List Expr × State) :
+    ρ₁ -·->ₜₚ* ρ₂ ↔ ∃ n obs, ρ₁ -<obs>->ₜₚ^[n] ρ₂ := by
+  constructor <;> intros hyp
+  · replace ⟨n, hyp⟩ := ReflTrans_iff_exists_iterate.1 hyp
+    exists n
+    induction hyp using Relation.Iterate.head_induction_on with
+    | rfl => exists []; constructor
+    | head ρ' firstStep lastSteps IH =>
+      replace ⟨obs, firstStep⟩ := firstStep
+      replace ⟨obs', IH⟩ := IH
+      exists (obs ++ obs')
+      constructor <;> assumption
+  · replace ⟨n, obs, hyp⟩ := hyp
+    apply ReflTrans_iff_exists_iterate.2
+    exists n
+    induction hyp with
+    | refl => constructor
+    | cons n ρ₁ ρ₂ ρ₃ obs obs' =>
+      apply Iterate.head
+      · exists obs
+      · assumption
+
 open List in
 @[rocq_alias step_Permutation]
 theorem perm_of_step (t₁ t₁' t₂ : List Expr) :
@@ -413,7 +445,7 @@ section PureSteps
 -/
 @[rocq_alias pure_step]
 def purePrimStep (e₁ e₂ : Expr) :=
-  (∀ σ : State, pureReducible (e₁, σ)) ∧
+  (∀ σ : State, primStep.pureReducible (e₁, σ)) ∧
   (∀ {σ₁ σ₂ : State} {obs e₂' eₜ},
     (e₁, σ₁) -<obs>-> (e₂', σ₂, eₜ) →
     obs = [] ∧ σ₁ = σ₂ ∧ e₂ = e₂' ∧ eₜ = []
