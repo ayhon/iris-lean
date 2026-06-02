@@ -59,7 +59,7 @@ instance : EctxItemLanguage Exp ECtxItem State Observation Val where
 
 instance : Language.PureExec True 1 hl(if #true then {e1} else {e2}) e1 where
   pureExec _ := by
-    refine Relation.Iterate.head ?_ (.rfl _)
+    refine Relation.Iterate.once ?_
     constructor
     · intro σ
       exists e1, σ, []
@@ -77,7 +77,7 @@ instance : Language.PureExec True 1 hl(if #true then {e1} else {e2}) e1 where
 
 instance : Language.PureExec True 1 hl(if #false then {e1} else {e2}) e2 where
   pureExec _ := by
-    refine Relation.Iterate.head ?_ (.rfl _)
+    refine Relation.Iterate.once ?_
     constructor
     · intro σ
       exists e2, σ, []
@@ -95,7 +95,7 @@ instance : Language.PureExec True 1 hl(if #false then {e1} else {e2}) e2 where
 
 instance {f x : Binder} {e : Exp} {v : Val} : Language.PureExec True 1 (.app (.val (.rec_ f x e)) v) ((e.subst f (.rec_ f x e)).subst x v) where
   pureExec _ := by
-    refine Relation.Iterate.head ?_ (.rfl _)
+    refine Relation.Iterate.once ?_
     constructor
     · intro σ
       exists ((e.subst f (.rec_ f x e))).subst x v, σ, []
@@ -116,7 +116,7 @@ instance {f x : Binder} {e : Exp} {v : Val} : Language.PureExec True 1 (.app (.v
 theorem snd_pure {v1 v2 : Val}
   : Language.PureExec True 1 hl(snd(v(({v1}, {v2})))) v2 where
   pureExec _ := by
-    refine Relation.Iterate.head ?_ (.rfl _)
+    refine Relation.Iterate.once ?_
     constructor
     · intro σ
       exists v2, σ, []
